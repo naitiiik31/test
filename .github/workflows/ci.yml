@@ -1,0 +1,176 @@
+name: Calculator CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Compile
+        run: javac Calculator.java
+
+      - name: Upload compiled class
+        uses: actions/upload-artifact@v4
+        with:
+          name: calculator-class
+          path: Calculator.class
+          retention-days: 1
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: addition
+            a: '3'
+            op: '+'
+            b: '4'
+            expected: '7'
+            expect_failure: false
+          - name: negative-operand
+            a: '-5'
+            op: '+'
+            b: '3'
+            expected: '-2'
+            expect_failure: false
+          - name: subtraction
+            a: '10'
+            op: '-'
+            b: '4'
+            expected: '6'
+            expect_failure: false
+          - name: multiplication
+            a: '6'
+            op: '*'
+            b: '7'
+            expected: '42'
+            expect_failure: false
+          - name: division
+            a: '10'
+            op: '/'
+            b: '2'
+            expected: '5'
+            expect_failure: false
+          - name: division-decimal
+            a: '7'
+            op: '/'
+            b: '2'
+            expected: '3.5'
+            expect_failure: false
+          - name: divide-by-zero
+            a: '5'
+            op: '/'
+            b: '0'
+            expected: ''
+            expect_failure: true
+          - name: invalid-operator
+            a: '5'
+            op: '%'
+            b: '2'
+            expected: ''
+            expect_failure: true
+          - name: non-numeric-operand
+            a: 'abc'
+            op: '+'
+            b: '2'
+            expected: ''
+            expect_failure: true
+
+    steps:
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download compiled class
+        uses: actions/download-artifact@v4
+        with:
+          name: calculator-class
+
+      - name: Run test case
+        env:
+          A: ${{ matrix.a }}
+          OP: ${{ matrix.op }}
+          B: ${{ matrix.b }}
+          EXPECTED: ${{ matrix.expected }}
+          EXPECT_FAILURE: ${{ matrix.expect_failure }}
+        run: |
+          set +e
+          actual=$(java Calculator "$A" "$OP" "$B" 2>&1)
+          exit_code=$?
+          set -e
+
+          if [ "$EXPECT_FAILURE" = "true" ]; then
+            if [ "$exit_code" -eq 0 ]; then
+              echo "FAIL: Expected the program to fail, but it succeeded."
+              exit 1
+            fi
+            echo "PASS: Invalid input was correctly rejected."
+          else
+            if [ "$exit_code" -ne 0 ]; then
+              echo "FAIL: Program exited with code $exit_code. Output: $actual"
+              exit 1
+            fi
+
+            if [ "$actual" != "$EXPECTED" ]; then
+              echo "FAIL: Expected '$EXPECTED', got '$actual'"
+              exit 1
+            fi
+
+            echo "PASS: $A $OP $B = $actual"
+          fi
+
+  missing-args:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download compiled class
+        uses: actions/download-artifact@v4
+        with:
+          name: calculator-class
+
+      - name: Test missing arguments
+        run: |
+          if java Calculator 5 +; then
+            echo "FAIL: Expected missing arguments to be rejected."
+            exit 1
+          fi
+          echo "PASS: Missing arguments were correctly rejected."
+
+  all-tests-passed:
+    needs: [test, missing-args]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check test results
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+          MISSING_ARGS_RESULT: ${{ needs.missing-args.result }}
+        run: |
+          if [ "$TEST_RESULT" != "success" ] || [ "$MISSING_ARGS_RESULT" != "success" ]; then
+            echo "One or more test jobs failed."
+            exit 1
+          fi
+          echo "All test jobs passed."
